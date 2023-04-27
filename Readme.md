@@ -1,5 +1,5 @@
 ```bash
-curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" INSTALL_K3S_VERSION=v1.25.9+k3s1 sh -s - --disable traefik,servicelb
+curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" INSTALL_K3S_VERSION=v1.25.9+k3s1 sh -s - --disable traefik,servicelb --init-cluster
 ```
 
 ```bash
@@ -40,22 +40,27 @@ spec:
   - kubemaster1
 ```
 
+cp max@kube1.home:/etc/rancher/k3s/k3s.yaml ~/kubeconfig
+
 ```bash
 helm repo add jetstack https://charts.jetstack.io
 helm repo update
 helm install \
   cert-manager jetstack/cert-manager \
   --namespace cert-manager \
-  --version v1.11.0 \
+  --version v1.11.1 \
   --create-namespace \
   --set installCRDs=true
+  
+  or 
+  kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.11.0/cert-manager.yaml
+  
 ```
 
 ```bash
 helm repo add traefik https://helm.traefik.io/traefik 
 helm repo update
-kubectl create ns traefik-v2
-helm install --namespace=traefik-v2     traefik traefik/traefik
+helm install --namespace=traefik-v2  --create-namespace    traefik traefik/traefik
 ```
 
 
@@ -112,7 +117,8 @@ kubectl create namespace cattle-system
 helm install rancher rancher-latest/rancher \
   --namespace cattle-system \
   --set hostname=rancher.server \
-  --set bootstrapPassword=admin
+  --set bootstrapPassword=admin \
+  --values rancher.value
   
 ```
 
