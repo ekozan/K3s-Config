@@ -154,6 +154,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: ffd-link-tls
+  namespace: aaaaaa
   annotations:
     replicator.v1.mittwald.de/replicate-from: certmanager/ffd-link-tls
 data: {}
