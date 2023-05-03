@@ -139,6 +139,9 @@ spec:
   dnsNames:
   - "ffd.link"
   - "*.ffd.link"
+  secretTemplate:
+      annotations:
+        replicator.v1.mittwald.de/replicate-to: "*" #"my-ns-1,namespace-[0-9]*"
 ```
 
 
