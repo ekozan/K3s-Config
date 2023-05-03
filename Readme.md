@@ -123,4 +123,41 @@ helm install rancher rancher-latest/rancher \
 ```
 
 
+```yaml
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ffd-link
+  namespace: certmanager
+spec:
+  secretName: ffd-link-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  commonName: "*.ffd.link"
+  dnsNames:
+  - "ffd.link"
+  - "*.ffd.link"
+```
+
+
+```bash
+ helm repo add mittwald https://helm.mittwald.de
+ helm repo update
+ helm upgrade --install kubernetes-replicator mittwald/kubernetes-replicator
+```
+
+```yaml
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ffd-link-tls
+  annotations:
+    replicator.v1.mittwald.de/replicate-from: certmanager/ffd-link-tls
+data: {}
+```
+
+
 
