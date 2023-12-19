@@ -18,6 +18,15 @@ spec:
   - FC00:99::1/32
   avoidBuggyIPs: true
 ---
+apiVersion: metallb.io/v1beta1
+kind: BFDProfile
+metadata:
+  name: bfdprofiledef
+  namespace: metallb-system
+spec:
+  receiveInterval: 300
+  transmitInterval: 300
+---
 apiVersion: metallb.io/v1beta2
 kind: BGPPeer
 metadata:
@@ -27,7 +36,18 @@ spec:
   myASN: 65002
   peerASN: 65000
   peerAddress: 10.10.0.1
-
+  bfdProfile: bfdprofiledef
+---
+apiVersion: metallb.io/v1beta2
+kind: BGPPeer
+metadata:
+  name: peerv6
+  namespace: metallb-system
+spec:
+  myASN: 65002
+  peerASN: 65000
+  peerAddress: 2a01:e0a:a66:5141::2
+  bfdProfile: bfdprofiledef
 ---
 apiVersion: metallb.io/v1beta1
 kind: BGPAdvertisement
