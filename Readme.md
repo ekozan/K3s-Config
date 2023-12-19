@@ -15,6 +15,7 @@ metadata:
 spec:
   addresses:
   - 10.99.0.1/24
+  - FC00:99::1/32
   avoidBuggyIPs: true
 ---
 apiVersion: metallb.io/v1beta2
