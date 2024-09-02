@@ -3,6 +3,11 @@ curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" INSTALL_K3S_VERSION=v1.
 ```
 
 ```bash
+curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" INSTALL_K3S_VERSION=v1.25.9+k3s1 K3S_URL=https://kube2:6443 K3S_TOKEN=$TOKEN sh -s - --disable traefik,servicelb --cluster-init 
+```
+
+
+```bash
 kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.9/config/manifests/metallb-native.yaml
 ```
 
