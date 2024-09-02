@@ -3,7 +3,7 @@ curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" INSTALL_K3S_VERSION=v1.
 ```
 
 ```bash
-curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" INSTALL_K3S_VERSION=v1.25.9+k3s1 K3S_URL=https://kube2.server:6443 K3S_TOKEN=$TOKEN sh -s - server --disable traefik,servicelb --cluster-init 
+curl -sfL https://get.k3s.io | K3S_KUBECONFIG_MODE="644" INSTALL_K3S_VERSION=v1.25.9+k3s1 K3S_TOKEN=$TOKEN sh -s - server  --server https://kube2.server:6443 --disable traefik,servicelb --cluster-init --cluster-cidr=10.42.0.0/16,2001:cafe:42:0::/56 --service-cidr=10.43.0.0/16,2001:cafe:42:1::/112
 ```
 
 
