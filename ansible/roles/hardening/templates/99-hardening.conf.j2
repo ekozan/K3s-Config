@@ -1,0 +1,13 @@
+# Géré par Ansible (rôle hardening). Drop-in sshd_config.
+PermitRootLogin {{ ssh_permit_root_login }}
+PasswordAuthentication {{ ssh_password_authentication }}
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+X11Forwarding no
+AllowTcpForwarding {{ ssh_allow_tcp_forwarding }}
+MaxAuthTries {{ ssh_max_auth_tries }}
+LoginGraceTime 30
+ClientAliveInterval {{ ssh_client_alive_interval }}
+ClientAliveCountMax {{ ssh_client_alive_count_max }}
+AllowUsers {{ ssh_allow_users | join(' ') }}

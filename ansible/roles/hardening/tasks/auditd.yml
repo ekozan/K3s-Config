@@ -1,0 +1,33 @@
+---
+- name: Installer auditd
+  ansible.builtin.apt:
+    name:
+      - auditd
+      - audispd-plugins
+    state: present
+
+- name: Règles auditd de base (fichiers sensibles + modules noyau)
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/99-hardening.rules
+    owner: root
+    group: root
+    mode: "0640"
+    content: |
+      # Géré par Ansible (rôle hardening).
+      -w /etc/passwd -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+      -w /etc/group  -p wa -k identity
+      -w /etc/sudoers -p wa -k scope
+      -w /etc/sudoers.d/ -p wa -k scope
+      -w /etc/ssh/ -p wa -k sshd
+      -w /etc/rancher/ -p wa -k k3s-config
+      -w /var/lib/rancher/k3s/server/token -p r -k k3s-token
+      -a always,exit -F arch=b64 -S init_module,delete_module,finit_module -k modules
+      -e 2
+  notify: restart auditd
+
+- name: Activer auditd
+  ansible.builtin.service:
+    name: auditd
+    enabled: true
+    state: started

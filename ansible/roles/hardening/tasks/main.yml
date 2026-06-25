@@ -1,0 +1,40 @@
+---
+- name: Mises à jour & unattended-upgrades
+  ansible.builtin.import_tasks: apt.yml
+  when: harden_apt | bool
+  tags: [apt]
+
+- name: Permissions du kubeconfig k3s
+  ansible.builtin.import_tasks: perms.yml
+  when: harden_perms | bool
+  tags: [perms]
+
+- name: Paramètres noyau (sysctl)
+  ansible.builtin.import_tasks: sysctl.yml
+  when: harden_sysctl | bool
+  tags: [sysctl]
+
+- name: Blacklist de modules noyau
+  ansible.builtin.import_tasks: modules.yml
+  when: harden_modules | bool
+  tags: [modules]
+
+- name: auditd
+  ansible.builtin.import_tasks: auditd.yml
+  when: harden_auditd | bool
+  tags: [auditd]
+
+- name: Durcissement SSH
+  ansible.builtin.import_tasks: ssh.yml
+  when: harden_ssh | bool
+  tags: [ssh]
+
+- name: Pare-feu nftables (INPUT + garde NodePort)
+  ansible.builtin.import_tasks: nftables.yml
+  when: harden_nftables | bool
+  tags: [nftables]
+
+- name: CrowdSec hôte (agent + firewall-bouncer)
+  ansible.builtin.import_tasks: crowdsec.yml
+  when: harden_crowdsec | bool
+  tags: [crowdsec]

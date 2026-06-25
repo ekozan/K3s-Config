@@ -1,0 +1,35 @@
+---
+- name: Installer unattended-upgrades
+  ansible.builtin.apt:
+    name:
+      - unattended-upgrades
+      - apt-listchanges
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configurer unattended-upgrades (security only, sans reboot auto)
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/52-k3s-hardening
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      // Géré par Ansible (rôle hardening). Ne pas éditer à la main.
+      Unattended-Upgrade::Allowed-Origins {
+          "${distro_id}:${distro_codename}-security";
+          "${distro_id}ESMApps:${distro_codename}-apps-security";
+          "${distro_id}ESM:${distro_codename}-infra-security";
+      };
+      // ⚠️ JAMAIS de reboot auto sur un nœud k3s (drain manuel requis).
+      Unattended-Upgrade::Automatic-Reboot "false";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Activer le service unattended-upgrades
+  ansible.builtin.service:
+    name: unattended-upgrades
+    enabled: true
+    state: started

@@ -1,0 +1,14 @@
+---
+# ⚠️ Garder une session SSH ouverte pendant l'application : le handler valide la
+# config (`sshd -t`) AVANT de recharger, mais on ne reconfigure jamais sans filet.
+- name: Déposer le drop-in de durcissement sshd
+  ansible.builtin.template:
+    src: 99-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+  # La validation se fait sur la config COMPLÈTE via le handler `sshd -t`
+  # (un drop-in seul n'est pas une config valide). Si `sshd -t` échoue, le play
+  # s'arrête et sshd n'est PAS rechargé → l'ancienne config reste active.
+  notify: reload sshd

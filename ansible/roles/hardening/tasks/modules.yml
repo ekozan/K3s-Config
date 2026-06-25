@@ -1,0 +1,15 @@
+---
+- name: Blacklister les modules noyau à risque (hors modules k3s)
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/blacklist-hardening.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      # Géré par Ansible (rôle hardening). Ne pas éditer à la main.
+      # ⚠️ Ne JAMAIS ajouter vxlan/wireguard/br_netfilter/overlay/nf_conntrack/
+      #    ip_tables/nf_tables — k3s/flannel en dépendent.
+      {% for m in blacklisted_modules %}
+      install {{ m }} /bin/true
+      {% endfor %}
+  notify: update initramfs

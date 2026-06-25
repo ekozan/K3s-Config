@@ -1,0 +1,38 @@
+---
+- name: reload sshd
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  notify: restart sshd
+
+- name: restart sshd
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded
+
+- name: reload sysctl
+  ansible.builtin.command: sysctl --system
+  changed_when: false
+
+- name: reload nftables
+  ansible.builtin.service:
+    name: nftables
+    state: reloaded
+
+- name: update initramfs
+  ansible.builtin.command: update-initramfs -u
+  changed_when: false
+
+- name: restart auditd
+  ansible.builtin.service:
+    name: auditd
+    state: restarted
+
+- name: restart crowdsec
+  ansible.builtin.service:
+    name: crowdsec
+    state: restarted
+
+- name: restart crowdsec-firewall-bouncer
+  ansible.builtin.service:
+    name: crowdsec-firewall-bouncer
+    state: restarted

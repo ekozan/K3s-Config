@@ -1,0 +1,72 @@
+---
+# ─── Flags d'activation (sûr par défaut) ──────────────────────────────────────
+# Les tâches potentiellement bloquantes sont OFF tant qu'on ne les a pas testées.
+harden_apt: true            # unattended-upgrades (security only, no auto-reboot)
+harden_perms: true          # chmod 600 du kubeconfig k3s
+harden_sysctl: true         # sysctl durci SANS toucher au forwarding
+harden_modules: true        # blacklist de modules (hors modules k3s)
+harden_auditd: true         # auditd + règles de base
+harden_ssh: false           # ⚠️ durcissement sshd — activer après test
+harden_nftables: false      # ⚠️ pare-feu hôte INPUT — activer après test
+harden_nodeport_guard: false # ⚠️ table nft anti-fuite NodePort (cf. §4bis)
+harden_crowdsec: false      # agent CrowdSec hôte + firewall-bouncer (nécessite creds)
+
+# ─── SSH ──────────────────────────────────────────────────────────────────────
+ssh_allow_users: ["max"]
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+ssh_allow_tcp_forwarding: "yes"   # 'no' casse `kubectl port-forward` via SSH
+ssh_max_auth_tries: 3
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 2
+
+# ─── Réseau / firewall ────────────────────────────────────────────────────────
+admin_cidr_v4: "10.10.0.0/24"     # VLAN nœuds/admin
+admin_cidr_v6: "fd00:10::/64"     # ⚠️ adapter au vrai préfixe ULA d'admin
+bgp_peer_v4: "10.10.0.1"          # pfSense (FRR)
+pod_cidr_v4: "10.42.0.0/16"
+service_cidr_v4: "10.43.0.0/16"
+pod_cidr_v6: "2001:cafe:42::/56"
+nodeport_range: "30000-32767"
+
+# ─── sysctl (forwarding OBLIGATOIRE pour k3s) ─────────────────────────────────
+sysctl_hardening:
+  net.ipv4.ip_forward: "1"               # NE PAS mettre 0 (casse les pods)
+  net.ipv6.conf.all.forwarding: "1"      # NE PAS mettre 0 (dual-stack)
+  net.ipv4.conf.all.rp_filter: "1"
+  net.ipv4.conf.all.accept_source_route: "0"
+  net.ipv6.conf.all.accept_source_route: "0"
+  net.ipv4.conf.all.accept_redirects: "0"
+  net.ipv6.conf.all.accept_redirects: "0"
+  net.ipv4.conf.all.send_redirects: "0"
+  net.ipv4.conf.all.log_martians: "1"
+  net.ipv4.tcp_syncookies: "1"
+  kernel.kptr_restrict: "2"
+  kernel.dmesg_restrict: "1"
+  kernel.yama.ptrace_scope: "1"
+  kernel.unprivileged_bpf_disabled: "1"
+  fs.protected_hardlinks: "1"
+  fs.protected_symlinks: "1"
+  fs.suid_dumpable: "0"
+
+# Modules à blacklister. ⚠️ NE JAMAIS ajouter vxlan/wireguard/br_netfilter/
+# overlay/nf_conntrack/ip_tables/nf_tables — k3s/flannel en dépendent.
+blacklisted_modules:
+  - dccp
+  - sctp
+  - rds
+  - tipc
+  - cramfs
+  - freevxfs
+  - jffs2
+  - hfs
+  - hfsplus
+  - udf
+  - firewire-core
+
+# ─── CrowdSec hôte ────────────────────────────────────────────────────────────
+crowdsec_lapi_url: "http://10.99.0.10:8080"   # Service LoadBalancer (agrocd-home)
+crowdsec_collections:
+  - crowdsecurity/sshd
+  - crowdsecurity/linux
+# crowdsec_machine_password / crowdsec_bouncer_key : par hôte dans l'inventaire.

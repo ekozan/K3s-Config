@@ -1,0 +1,10 @@
+---
+# Playbook de durcissement OS des nœuds k3s.
+# Voir ../ubuntu-hardening.md (plan) et README.md (mode d'emploi).
+- name: Hardening des nœuds k3s
+  hosts: k3s_nodes
+  become: true
+  # Un nœud à la fois : on garde toujours un control-plane sain.
+  serial: 1
+  roles:
+    - hardening

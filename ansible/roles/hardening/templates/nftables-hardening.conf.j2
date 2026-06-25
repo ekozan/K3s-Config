@@ -1,0 +1,60 @@
+#!/usr/sbin/nft -f
+# Géré par Ansible (rôle hardening). Pare-feu HÔTE pour nœud k3s.
+#
+# Principe : on ne filtre QUE l'INPUT de l'hôte. Le FORWARD (réseau des pods) et
+# le NAT restent gérés par k3s/kube-proxy dans LEURS propres tables — on n'y
+# touche pas. ⚠️ La policy `drop` de notre INPUT s'applique en plus des chaînes
+# k3s : tout flux légitime vers l'hôte doit être explicitement autorisé ci-dessous.
+
+table inet hardening {
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    # État / loopback / interfaces internes du cluster
+    ct state established,related accept
+    ct state invalid drop
+    iif "lo" accept
+    iifname { "cni0", "flannel.1" } accept
+
+    # ICMP — indispensable (PMTU, ND IPv6). Ne pas bloquer.
+    ip  protocol icmp accept
+    ip6 nexthdr icmpv6 accept
+
+    # Trafic interne du cluster (pods / services)
+    ip  saddr {{ pod_cidr_v4 }} accept
+    ip  saddr {{ service_cidr_v4 }} accept
+    ip6 saddr {{ pod_cidr_v6 }} accept
+
+    # SSH — VLAN admin uniquement
+    ip  saddr {{ admin_cidr_v4 }} tcp dport 22 accept
+
+    # API server k3s, kubelet, etcd (HA) — depuis nœuds/admin uniquement
+    ip  saddr {{ admin_cidr_v4 }} tcp dport { 6443, 10250, 2379, 2380 } accept
+
+    # Flannel VXLAN (si flannel par défaut)
+    ip  saddr {{ admin_cidr_v4 }} udp dport 8472 accept
+
+    # BGP + BFD MetalLB ↔ pfSense
+    ip  saddr {{ bgp_peer_v4 }} tcp dport 179 accept
+    ip  saddr {{ bgp_peer_v4 }} udp dport 3784 accept
+
+    # Tout le reste vers l'hôte est jeté (policy drop). Journaliser au besoin :
+    # log prefix "nft-drop-input " limit rate 5/minute
+  }
+}
+
+{% if harden_nodeport_guard | bool %}
+# ── Garde anti-fuite NodePort (cf. ubuntu-hardening.md §4bis) ──────────────────
+# Les NodePorts subissent un DNAT en nat/PREROUTING AVANT l'INPUT : on les filtre
+# donc en prerouting priorité raw (-300), AVANT le DNAT de kube-proxy. On laisse
+# passer le VLAN admin, on jette tout le reste (y compris l'IPv6 publique).
+table inet nodeport_guard {
+  chain prerouting {
+    type filter hook prerouting priority -300; policy accept;
+    ip  saddr {{ admin_cidr_v4 }} tcp dport {{ nodeport_range }} accept
+    ip  saddr {{ admin_cidr_v4 }} udp dport {{ nodeport_range }} accept
+    tcp dport {{ nodeport_range }} drop
+    udp dport {{ nodeport_range }} drop
+  }
+}
+{% endif %}

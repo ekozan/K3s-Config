@@ -1,0 +1,32 @@
+---
+# ⚠️ TÂCHE BLOQUANTE. Tester en --check d'abord, garder une session ouverte, et
+# valider le peering BGP + l'accès cluster après application.
+# On ne filtre QUE la chaîne INPUT (host) ; le FORWARD reste géré par k3s.
+- name: Installer nftables
+  ansible.builtin.apt:
+    name: nftables
+    state: present
+
+- name: Déposer le ruleset host (INPUT + garde NodePort optionnelle)
+  ansible.builtin.template:
+    src: nftables-hardening.conf.j2
+    dest: /etc/nftables.d/10-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "/usr/sbin/nft -c -f %s"
+  notify: reload nftables
+
+- name: S'assurer que le ruleset host est inclus par nftables.conf
+  ansible.builtin.lineinfile:
+    path: /etc/nftables.conf
+    line: 'include "/etc/nftables.d/*.conf"'
+    insertafter: EOF
+    create: false
+  notify: reload nftables
+
+- name: Activer nftables
+  ansible.builtin.service:
+    name: nftables
+    enabled: true
+    state: started

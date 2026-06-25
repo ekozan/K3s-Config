@@ -1,0 +1,11 @@
+# Géré par Ansible. Sources de logs SSH de l'hôte (parsées par la collection sshd).
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog
+---
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=ssh.service"
+labels:
+  type: syslog

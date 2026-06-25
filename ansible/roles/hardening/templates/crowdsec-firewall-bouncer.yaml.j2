@@ -1,0 +1,18 @@
+# Géré par Ansible. Bouncer firewall : lit les décisions de la LAPI du cluster
+# et bloque au pare-feu nftables de l'hôte (table dédiée, n'interfère pas avec
+# les chaînes k3s ni avec table inet hardening).
+mode: nftables
+update_frequency: 10s
+log_level: info
+api_url: {{ crowdsec_lapi_url }}
+api_key: {{ crowdsec_bouncer_key }}
+deny_action: DROP
+nftables:
+  ipv4:
+    enabled: true
+    table: crowdsec
+    chain: crowdsec-chain
+  ipv6:
+    enabled: true
+    table: crowdsec6
+    chain: crowdsec-chain

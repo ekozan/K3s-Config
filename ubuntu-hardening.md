@@ -285,8 +285,14 @@ sudo chown root:root /etc/rancher/k3s/k3s.yaml
 
 ### §11. Industrialisation & vérification
 
-- **Ansible** : transformer ce plan en rôle idempotent versionné dans `K3s-Config`
-  (`roles/hardening/`). Avantages : reproductible, revue par diff, rollback facile.
+- **Ansible** : le plan OS est implémenté en rôle idempotent versionné dans
+  `K3s-Config` → [`ansible/`](./ansible/) (rôle `hardening`). Les tâches
+  bloquantes (SSH, nftables, garde NodePort, CrowdSec hôte) sont **désactivées par
+  défaut** et s'activent par flag une fois testées. `serial: 1` → un nœud à la fois.
+  > **Répartition hybride** : ArgoCD déploie le *in-cluster* (Service LoadBalancer
+  > LAPI + Job d'enregistrement des hôtes, cf. `agrocd-home/init/04-*` et `05-*`) ;
+  > Ansible configure l'*OS* des nœuds (y compris l'agent CrowdSec et le
+  > firewall-bouncer, qui consomment les identifiants générés par le Job).
 - **Audit automatisé** :
   - `lynis audit system` (baseline + score, rapide à mettre en place).
   - **OpenSCAP** / `ssg-debian` ou le profil CIS Ubuntu (`oscap xccdf eval`).
@@ -318,6 +324,13 @@ sudo chown root:root /etc/rancher/k3s/k3s.yaml
 > rattacher la protection SSH de l'hôte à la **LAPI déjà déployée dans le cluster**
 > (`init/01-crowdsec.yaml`). Une seule base de décisions, partagée entre le HTTP
 > (bouncer plugin Traefik) et le SSH (bouncers firewall des hôtes).
+>
+> **Implémentation (hybride)** — le **cluster** (A.1, A.2) est livré par ArgoCD :
+> `agrocd-home/init/04-crowdsec-lapi-lan.yaml` (Service LoadBalancer) et
+> `05-crowdsec-host-register.yaml` (Job d'enregistrement). L'**hôte** (A.3, A.4)
+> est livré par Ansible : rôle `hardening`, tâche `crowdsec.yml` (flag
+> `harden_crowdsec`). Les commandes manuelles ci-dessous documentent ce que ces
+> automatisations font.
 
 ### A.0. Architecture cible
 
