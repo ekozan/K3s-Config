@@ -221,8 +221,11 @@ sudo chown root:root /etc/rancher/k3s/k3s.yaml
 - **auditd** + règles CIS (`/etc/audit/rules.d/`) : suivi des modifs sur
   `/etc/passwd`, `/etc/ssh/`, `/etc/rancher/`, appels `execve`, modules noyau.
 - **journald** persistant (`Storage=persistent`), rotation/limite de taille.
-- **fail2ban** sur `sshd` (en plus de CrowdSec qui couvre le HTTP via Traefik) ;
-  ou déployer le scénario SSH de CrowdSec directement sur l'hôte pour unifier.
+- **Protection SSH** : plutôt que fail2ban (silo séparé), on **unifie avec la
+  CrowdSec déjà déployée dans le cluster** — l'agent hôte parse `auth.log`, remonte
+  ses alertes à la **LAPI du cluster**, et un `cs-firewall-bouncer` local applique
+  les décisions au pare-feu nftables. Décisions et bannissements centralisés,
+  partagés entre le HTTP (Traefik) et le SSH (hôtes). ➜ Voir l'**Annexe A**.
 - Exporter les logs hors-nœud (TrueNAS/syslog/Loki) pour préserver les preuves en
   cas de compromission d'un nœud.
 
@@ -251,6 +254,198 @@ sudo chown root:root /etc/rancher/k3s/k3s.yaml
 | Reboot auto (unattended-upgrades) | ❌ nœud drainé sans préavis |
 | Fermer 6443/2379-2380/10250 entre nœuds | ❌ casse l'API HA + etcd |
 | Bloquer ICMPv6 (ND) | ❌ casse l'IPv6 sur le VLAN MetalLB |
+
+---
+
+## Annexe A — CrowdSec hôte unifié avec la LAPI du cluster
+
+> Objectif : ne **pas** monter une seconde instance CrowdSec sur les nœuds, mais
+> rattacher la protection SSH de l'hôte à la **LAPI déjà déployée dans le cluster**
+> (`init/01-crowdsec.yaml`). Une seule base de décisions, partagée entre le HTTP
+> (bouncer plugin Traefik) et le SSH (bouncers firewall des hôtes).
+
+### A.0. Architecture cible
+
+```
+   ┌─────────────────────── Cluster k3s ───────────────────────┐
+   │                                                            │
+   │   Agent (DaemonSet) ─┐                                     │
+   │   parse logs Traefik │                                     │
+   │                      ▼                                     │
+   │                 ┌──────────┐   ◄── plugin Traefik (HTTP)   │
+   │                 │  LAPI    │       décisions HTTP/AppSec    │
+   │                 │ (in-pod) │                               │
+   │                 └────┬─────┘                               │
+   │   Service LoadBalancer (MetalLB) → IP LAN stable :8080     │
+   └────────────────────┬──────────────────────────────────────┘
+                         │  (VLAN admin, LAN uniquement)
+        ┌────────────────┼────────────────┐
+        ▼                                  ▼
+  kube1 (hôte)                       kube2 (hôte)
+  ├─ crowdsec (agent)  → parse /var/log/auth.log → push alertes vers LAPI
+  └─ cs-firewall-bouncer → poll décisions LAPI → DROP nftables
+```
+
+- L'agent hôte **n'active pas** sa propre LAPI (`api.server.enable: false`) : il
+  pointe vers la LAPI du cluster.
+- Le `cs-firewall-bouncer` est ce qui **bloque réellement** au niveau OS (nftables),
+  en complément du §4. Il crée sa propre table/chaîne nftables `crowdsec`.
+
+### A.1. Côté cluster — exposer la LAPI aux nœuds (MetalLB)
+
+La LAPI n'est aujourd'hui qu'un `ClusterIP`. Pour que les hôtes la joignent à une
+IP stable, on l'expose via un `Service` LoadBalancer sur le pool MetalLB
+(`10.99.0.0/24`). À ajouter au dépôt **agrocd-home** (`init/`) :
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: crowdsec-lapi-lan
+  namespace: crowdsec
+  annotations:
+    # IP fixe choisie dans le pool MetalLB BGP, annoncée à pfSense
+    metallb.universe.tf/loadBalancerIPs: 10.99.0.10
+spec:
+  type: LoadBalancer
+  # LAN uniquement — restreindre les sources autorisées
+  loadBalancerSourceRanges:
+    - 10.10.0.0/24       # VLAN nœuds/admin
+  selector:
+    # ⚠️ aligner sur les labels réels du pod LAPI : `kubectl -n crowdsec get pod -l type=lapi --show-labels`
+    type: lapi
+  ports:
+    - name: lapi
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+```
+
+> Alternative sans LoadBalancer : les nœuds k3s atteignent déjà le `ClusterIP`
+> (kube-proxy programme l'hôte), mais l'IP n'est pas stable et la résolution
+> `*.svc.cluster.local` n'existe pas hors-cluster. Le LoadBalancer MetalLB donne
+> une IP fixe et routée par BGP → approche recommandée.
+
+> 🔒 Durcissement : `loadBalancerSourceRanges` limite l'accès au VLAN admin. Pour
+> du TLS sur la LAPI, activer `tls` dans les values du chart et utiliser
+> `crowdsecLapiScheme: https` côté hôtes (sinon le trafic LAPI est en clair sur le
+> LAN — acceptable en LAN de confiance, à arbitrer).
+
+### A.2. Côté cluster — enregistrer machines & bouncers des hôtes
+
+Chaque hôte a besoin de **deux** identités auprès de la LAPI : une **machine**
+(pour l'agent qui pousse des alertes) et un **bouncer** (pour le firewall-bouncer
+qui lit les décisions). On les crée via `cscli` dans le pod LAPI, comme le fait
+déjà `init/02-crowdsec-bouncer.yaml` pour Traefik :
+
+```bash
+LAPI_POD=$(kubectl -n crowdsec get pod -l type=lapi -o jsonpath='{.items[0].metadata.name}')
+
+# Machines (agents hôtes)
+kubectl -n crowdsec exec "$LAPI_POD" -- cscli machines add kube1-host --password '<MDP1>'
+kubectl -n crowdsec exec "$LAPI_POD" -- cscli machines add kube2-host --password '<MDP2>'
+
+# Bouncers firewall (un par hôte)
+kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers add kube1-fw -k '<CLE_FW1>'
+kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers add kube2-fw -k '<CLE_FW2>'
+```
+
+> Idéalement, industrialiser ça en Job ArgoCD calqué sur `02-crowdsec-bouncer.yaml`
+> (clés stockées en Secret stable, idempotent) plutôt qu'en commandes manuelles.
+
+### A.3. Côté hôte — agent CrowdSec rattaché à la LAPI distante
+
+```bash
+# Dépôt officiel + paquets
+curl -s https://install.crowdsec.net | sudo sh
+sudo apt-get install -y crowdsec crowdsec-firewall-bouncer-nftables
+
+# Collections SSH/Linux
+sudo cscli collections install crowdsecurity/sshd crowdsecurity/linux
+```
+
+`/etc/crowdsec/config.yaml` — **désactiver la LAPI locale** et pointer le cluster :
+
+```yaml
+api:
+  server:
+    enable: false          # pas de LAPI locale : on utilise celle du cluster
+  client:
+    credentials_path: /etc/crowdsec/local_api_credentials.yaml
+```
+
+`/etc/crowdsec/local_api_credentials.yaml` (machine créée en A.2) :
+
+```yaml
+url: http://10.99.0.10:8080
+login: kube1-host
+password: <MDP1>
+```
+
+`/etc/crowdsec/acquis.yaml` — sources de logs SSH de l'hôte :
+
+```yaml
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog
+---
+source: journalctl
+journalctl_filter:
+  - "_SYSTEMD_UNIT=ssh.service"
+labels:
+  type: syslog
+```
+
+```bash
+sudo systemctl enable --now crowdsec
+sudo cscli metrics            # vérifie l'acquisition auth.log + lien LAPI
+```
+
+### A.4. Côté hôte — firewall-bouncer (nftables) qui applique les décisions
+
+`/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml` :
+
+```yaml
+mode: nftables
+update_frequency: 10s
+api_url: http://10.99.0.10:8080
+api_key: <CLE_FW1>          # clé bouncer créée en A.2
+# nftables : table dédiée, ne touche pas aux chaînes k3s
+nftables:
+  ipv4: { enabled: true, table: crowdsec, chain: crowdsec-chain }
+  ipv6: { enabled: true, table: crowdsec6, chain: crowdsec-chain }
+deny_action: DROP
+```
+
+```bash
+sudo systemctl enable --now crowdsec-firewall-bouncer
+sudo nft list table inet crowdsec     # vérifie la table de bannissement
+```
+
+> ⚠️ **Cohabitation avec le §4** : le firewall-bouncer crée sa **propre** table
+> nftables, indépendante des chaînes de k3s et de tes règles INPUT. Il n'interfère
+> pas avec le FORWARD géré par k3s. Vérifier l'ordre d'évaluation (priority des
+> hooks) pour que le DROP CrowdSec s'applique bien avant l'ACCEPT de tes règles.
+
+### A.5. Vérification de l'unification
+
+```bash
+# Sur le pod LAPI : les hôtes apparaissent comme machines + bouncers
+kubectl -n crowdsec exec "$LAPI_POD" -- cscli machines list     # kube1-host, kube2-host validés
+kubectl -n crowdsec exec "$LAPI_POD" -- cscli bouncers list     # traefik-bouncer + kubeX-fw
+
+# Test : une décision (HTTP ou SSH) est visible partout
+kubectl -n crowdsec exec "$LAPI_POD" -- cscli decisions list
+
+# Bannir manuellement une IP de test et vérifier le DROP sur l'hôte
+kubectl -n crowdsec exec "$LAPI_POD" -- cscli decisions add --ip 203.0.113.7 --duration 5m
+sudo nft list table inet crowdsec | grep 203.0.113.7
+```
+
+Une fois en place : un scan SSH bloque l'IP au pare-feu des **deux** nœuds **et**
+la décision est partagée avec le bouncer Traefik (et inversement) — une seule
+source de vérité pour toute la stack.
 
 ---
 
