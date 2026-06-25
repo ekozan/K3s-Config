@@ -1,0 +1,94 @@
+---
+# Playbook de MAINTENANCE — mises à jour système complètes des nœuds k3s.
+#
+# ⚠️ DISRUPTIF (≠ hardening). Séparé de site.yml volontairement : ne JAMAIS
+# l'inclure dans un run de durcissement (risque de reboot inattendu).
+#
+# ⚠️ etcd à 2 membres : rebooter un nœud fait PERDRE LE QUORUM le temps du
+# redémarrage. L'API Kubernetes devient indisponible (les pods déjà lancés
+# continuent de tourner, mais plus de scheduling/écriture) jusqu'au retour du
+# nœud. Lancer en heures creuses, un seul nœud à la fois (serial: 1), et
+# attendre que le 1er nœud soit Ready avant le suivant (géré ci-dessous).
+#
+# Déroulé par nœud : drain → apt full-upgrade → reboot si requis → attente Ready
+#                    → uncordon.
+#
+# Usage :
+#   ansible-playbook -i inventory.ini maintenance.yml --limit kube2 --check
+#   ansible-playbook -i inventory.ini maintenance.yml --limit kube2
+#   # (valider le cluster) puis kube1
+#
+# Variables utiles :
+#   k8s_node_name      : nom du nœud côté Kubernetes (défaut = inventory_hostname)
+#   maint_do_reboot    : autoriser le reboot si requis (défaut true)
+#   maint_drain_timeout: timeout du drain (défaut 120s)
+
+- name: Mise à jour système des nœuds k3s
+  hosts: k3s_nodes
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    k8s_node_name: "{{ inventory_hostname }}"
+    maint_do_reboot: true
+    maint_drain_timeout: "120s"
+  tasks:
+    - name: Cordon + drain du nœud (évince les pods, garde les daemonsets)
+      ansible.builtin.command: >-
+        k3s kubectl drain {{ k8s_node_name }}
+        --ignore-daemonsets --delete-emptydir-data
+        --timeout={{ maint_drain_timeout }}
+      changed_when: true
+
+    - name: Mise à jour des paquets (full-upgrade)
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: full
+        autoremove: true
+        autoclean: true
+      register: apt_upgrade
+
+    - name: Détecter si un redémarrage est requis
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required
+
+    - name: Redémarrer le nœud si nécessaire
+      ansible.builtin.reboot:
+        msg: "Reboot post-MAJ (Ansible maintenance)"
+        reboot_timeout: 600
+        post_reboot_delay: 15
+      when: maint_do_reboot | bool and reboot_required.stat.exists
+
+    - name: Attendre que le service k3s soit actif
+      ansible.builtin.service_facts:
+      register: svc
+      until: >-
+        ('k3s.service' in svc.ansible_facts.services and
+         svc.ansible_facts.services['k3s.service'].state == 'running')
+        or
+        ('k3s-server.service' in svc.ansible_facts.services and
+         svc.ansible_facts.services['k3s-server.service'].state == 'running')
+      retries: 30
+      delay: 10
+
+    - name: Attendre que le nœud repasse Ready
+      ansible.builtin.command: >-
+        k3s kubectl get node {{ k8s_node_name }}
+        -o jsonpath={.status.conditions[?(@.type=="Ready")].status}
+      register: node_ready
+      changed_when: false
+      until: node_ready.stdout == "True"
+      retries: 30
+      delay: 10
+
+    - name: Uncordon du nœud (réautorise le scheduling)
+      ansible.builtin.command: "k3s kubectl uncordon {{ k8s_node_name }}"
+      changed_when: true
+
+    - name: Récapitulatif
+      ansible.builtin.debug:
+        msg: >-
+          {{ k8s_node_name }} : MAJ appliquée
+          (reboot={{ (maint_do_reboot | bool) and reboot_required.stat.exists }}),
+          nœud Ready et schedulable.

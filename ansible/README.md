@@ -52,6 +52,35 @@ ansible-playbook -i inventory.ini site.yml --limit kube2
 ansible-playbook -i inventory.ini site.yml --limit kube1
 ```
 
+## Mises à jour système (playbook séparé)
+
+Le durcissement (`site.yml`) configure `unattended-upgrades` pour les **correctifs
+de sécurité** (sans reboot auto). Pour une **MAJ complète** (`full-upgrade` +
+reboot kernel), utiliser le playbook dédié `maintenance.yml` — disruptif, donc
+volontairement séparé :
+
+```bash
+ansible-playbook -i inventory.ini maintenance.yml --limit kube2 --check
+ansible-playbook -i inventory.ini maintenance.yml --limit kube2
+# valider le cluster, puis :
+ansible-playbook -i inventory.ini maintenance.yml --limit kube1
+```
+
+Par nœud : `drain → full-upgrade → reboot si requis → attente Ready → uncordon`
+(`serial: 1`, un nœud à la fois).
+
+> ⚠️ **etcd à 2 membres** : rebooter un nœud fait **perdre le quorum** le temps du
+> redémarrage → l'API Kubernetes est indisponible (les pods déjà lancés
+> continuent, mais plus de scheduling/écriture) jusqu'au retour du nœud. À lancer
+> en heures creuses. Un 3ᵉ membre etcd (nombre impair) supprimerait cette
+> indisponibilité — recommandé à terme.
+>
+> ℹ️ Ce playbook met à jour l'**OS**, pas le binaire **k3s** (figé via
+> `INSTALL_K3S_VERSION`). La MAJ de k3s reste un geste manuel distinct.
+
+Variables : `maint_do_reboot` (défaut `true`), `k8s_node_name` (défaut =
+`inventory_hostname`, à ajuster si le nom du nœud Kubernetes diffère), `maint_drain_timeout`.
+
 ## Ordre conseillé d'activation des flags risqués
 
 1. `harden_ssh: true` — **garder une session SSH ouverte** pendant le reload.
