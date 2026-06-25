@@ -124,6 +124,60 @@ Ports à **autoriser en INPUT** (d'après la doc k3s + ce setup) :
 - Tester avec `nft list ruleset` et vérifier le peering : sur pfSense
   `vtysh -c "show bgp summary"` doit montrer les voisins `Established`.
 
+#### §4bis. Fuite des NodePorts (`30000-32767`) — **point critique dual-stack**
+
+Les services `NodePort` se bindent sur **toutes** les interfaces du nœud, IPv4
+**et** IPv6 (`0.0.0.0:<port>` et `[::]:<port>`). Comme l'IPv6 du cluster est
+routée publiquement via pfSense (BGP), **un NodePort peut être joignable depuis
+Internet sur l'IPv6 globale du nœud** si rien ne le bloque. Même sans NodePort
+explicite aujourd'hui, la plage reste « ouverte par conception ». Trois couches,
+de la plus propre à la défense en profondeur :
+
+**1. (Recommandé) Restreindre le bind de kube-proxy — corrige à la source.**
+Faire en sorte que les NodePorts n'écoutent **que** sur le VLAN d'admin, jamais
+sur l'IPv6 publique. Au réinstall/MAJ k3s, ajouter :
+
+```
+--kube-proxy-arg=nodeport-addresses=10.10.0.0/24,<CIDR_IPv6_admin>
+```
+
+Les NodePorts ne se bindent alors plus que sur ces CIDR → plus aucune écoute sur
+l'IPv6 globale. C'est le correctif le plus net (rien à filtrer ensuite).
+
+**2. pfSense — périmètre.** S'assurer que le WAN n'autorise **aucun** flux entrant
+vers la plage `30000-32767` (TCP/UDP) à destination des nœuds, **y compris en
+IPv6** vers leurs GUA. Idéalement default-deny inbound vers les IP des nœuds, et
+n'exposer que les VIP MetalLB voulues.
+
+**3. nftables hôte — défense en profondeur.**
+> ⚠️ Piège : un `DROP` en chaîne **INPUT ne marche pas** pour les NodePorts.
+> kube-proxy fait le DNAT en `nat/PREROUTING` (priorité `-100`) **avant** INPUT,
+> puis le paquet part en FORWARD vers le pod. Il faut donc dropper **avant le
+> DNAT**, dans un hook `prerouting` de priorité plus basse (ex. `raw`, `-300`),
+> et uniquement pour les sources non-LAN :
+
+```nft
+table inet nodeport_guard {
+  chain prerouting {
+    type filter hook prerouting priority -300; policy accept;
+    # autoriser le VLAN admin/nœuds
+    ip  saddr 10.10.0.0/24 tcp dport 30000-32767 accept
+    ip  saddr 10.10.0.0/24 udp dport 30000-32767 accept
+    # tout le reste (IPv4 et IPv6 publique) → drop avant le DNAT kube-proxy
+    tcp dport 30000-32767 drop
+    udp dport 30000-32767 drop
+  }
+}
+```
+
+> Si la couche 1 (`nodeport-addresses`) est en place, cette table devient
+> redondante mais reste un bon filet. **Ne jamais** dropper la plage NodePort
+> entre nœuds (`10.10.0.0/24`) ni sur `lo` — certains health-checks l'utilisent.
+
+Vérifier : depuis une IP hors-LAN (ou via l'IPv6 publique), `nmap -p 30000-32767`
+sur un nœud ne doit renvoyer **aucun** port ouvert ; `ss -tlnp | grep -E ':3[0-2][0-9]{3}'`
+sur l'hôte ne doit montrer des binds que sur l'IP du VLAN admin.
+
 ### §5. Comptes, sudo & mots de passe
 
 - Un compte admin nominatif par personne, pas de compte partagé.
@@ -254,6 +308,7 @@ sudo chown root:root /etc/rancher/k3s/k3s.yaml
 | Reboot auto (unattended-upgrades) | ❌ nœud drainé sans préavis |
 | Fermer 6443/2379-2380/10250 entre nœuds | ❌ casse l'API HA + etcd |
 | Bloquer ICMPv6 (ND) | ❌ casse l'IPv6 sur le VLAN MetalLB |
+| Dropper les NodePorts en chaîne INPUT | ❌ inopérant : DNAT kube-proxy en PREROUTING (filtrer avant, cf. §4bis) |
 
 ---
 
